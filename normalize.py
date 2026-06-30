@@ -80,7 +80,9 @@ def _clean_field(s: str) -> str:
 
 
 def _strip_topic_suffix(channel: str) -> str:
-    return channel.removesuffix(" - Topic").strip()
+    if channel.endswith(" - Topic"):
+        channel = channel[: -len(" - Topic")]
+    return channel.strip()
 
 
 def normalize_one(
