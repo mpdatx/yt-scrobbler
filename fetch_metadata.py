@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Stage 2: Fetch YouTube Data API metadata with SQLite cache."""
 import json
 import logging

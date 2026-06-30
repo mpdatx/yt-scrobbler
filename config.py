@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -14,8 +16,8 @@ OUT_DIR = BASE_DIR / "out"
 MUSIC_CATEGORY_ID = "10"
 
 # Duration filters (seconds). Set to None to disable.
-MIN_DURATION_S: int | None = 30
-MAX_DURATION_S: int | None = 60 * 15  # 15 min — can be overridden per run
+MIN_DURATION_S = 30
+MAX_DURATION_S = 60 * 15  # 15 min — can be overridden per run
 
 # Output chunking
 CHUNK_SIZE = 2800

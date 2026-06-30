@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Stage 4: Normalize video title/channel into artist + track pairs."""
 import csv
 import re

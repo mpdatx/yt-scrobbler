@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Stage 3: Filter watch events to music-only and emit a filter report."""
 import logging
 from collections import Counter

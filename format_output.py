@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Stage 5: Format music events into Scrubbler-compatible CSV/JSON chunks."""
 import csv
 import json

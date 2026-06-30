@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Stage 1: Parse Google Takeout watch-history.json into WatchEvent objects."""
 import json
 import logging
