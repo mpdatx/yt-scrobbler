@@ -52,7 +52,7 @@ def _meta(title: str, channel: str, category_id="10"):
     ),
 ])
 def test_topic_channel(title, channel, exp_artist, exp_track):
-    artist, track, conf = normalize_one(_event(channel=channel), _meta(title, channel))
+    artist, track, _album, conf = normalize_one(_event(channel=channel), _meta(title, channel))
     assert conf == CONF_TOPIC
     assert artist == exp_artist
     assert track == exp_track
@@ -112,7 +112,7 @@ def test_topic_channel(title, channel, exp_artist, exp_track):
     ),
 ])
 def test_parsed_split(title, channel, exp_artist, exp_track):
-    artist, track, conf = normalize_one(_event(channel=channel), _meta(title, channel))
+    artist, track, _album, conf = normalize_one(_event(channel=channel), _meta(title, channel))
     assert conf == CONF_PARSED, f"Expected CONF_PARSED, got {conf!r} for title={title!r}"
     assert artist == exp_artist
     assert track == exp_track
@@ -126,7 +126,7 @@ def test_parsed_split(title, channel, exp_artist, exp_track):
     ("Stairway to Heaven [HD]", "Led Zeppelin", "Led Zeppelin"),
 ])
 def test_fallback(title, channel, exp_artist):
-    artist, track, conf = normalize_one(_event(channel=channel), _meta(title, channel))
+    artist, track, _album, conf = normalize_one(_event(channel=channel), _meta(title, channel))
     assert conf == CONF_FALLBACK
     assert artist == exp_artist
 
@@ -157,7 +157,7 @@ def test_clean_field(raw, expected):
 # ---------------------------------------------------------------------------
 def test_em_dash_split():
     title = "Bon Iver — Skinny Love (Official)"
-    artist, track, conf = normalize_one(_event(channel="BonIverVEVO"), _meta(title, "BonIverVEVO"))
+    artist, track, _album, conf = normalize_one(_event(channel="BonIverVEVO"), _meta(title, "BonIverVEVO"))
     assert conf == CONF_PARSED
     assert artist == "Bon Iver"
     assert track == "Skinny Love"
@@ -165,7 +165,7 @@ def test_em_dash_split():
 
 def test_en_dash_split():
     title = "Frank Ocean – Thinking Bout You"
-    artist, track, conf = normalize_one(_event(channel="FrankOceanVEVO"), _meta(title, "FrankOceanVEVO"))
+    artist, track, _album, conf = normalize_one(_event(channel="FrankOceanVEVO"), _meta(title, "FrankOceanVEVO"))
     assert conf == CONF_PARSED
     assert artist == "Frank Ocean"
     assert track == "Thinking Bout You"
@@ -176,7 +176,7 @@ def test_en_dash_split():
 # ---------------------------------------------------------------------------
 def test_hashtag_stripped():
     title = "Artist - Track #NewMusic #Pop"
-    artist, track, conf = normalize_one(_event(channel="ArtistVEVO"), _meta(title, "ArtistVEVO"))
+    artist, track, _album, conf = normalize_one(_event(channel="ArtistVEVO"), _meta(title, "ArtistVEVO"))
     assert conf == CONF_PARSED
     assert "NewMusic" not in track
     assert "#" not in track

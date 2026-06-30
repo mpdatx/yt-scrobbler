@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+"""Write audit CSVs after filter and normalize stages."""
+import csv
+from pathlib import Path
+
+from models import MusicEvent
+
+
+def _yt_url(video_id: str) -> str:
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+_KEPT_FIELDS = [
+    "video_id", "url", "artist", "track", "album",
+    "confidence", "channel", "raw_title", "watched_at",
+]
+
+_DROPPED_FIELDS = [
+    "video_id", "url", "channel", "title", "reason", "watched_at",
+]
+
+
+def write_audit_kept(events: list[MusicEvent], path: Path) -> None:
+    """Write every normalized music event to a CSV for spot-checking."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=_KEPT_FIELDS)
+        writer.writeheader()
+        for e in events:
+            writer.writerow({
+                "video_id": e.video_id,
+                "url": _yt_url(e.video_id),
+                "artist": e.artist,
+                "track": e.track,
+                "album": e.album or "",
+                "confidence": e.confidence,
+                "channel": e.channel,
+                "raw_title": e.raw_title,
+                "watched_at": e.watched_at.isoformat(),
+            })
+    print(f"  Audit (kept)    → {path} ({len(events):,} rows)")
+
+
+def write_audit_dropped(dropped_rows: list[dict], path: Path) -> None:
+    """Write every filtered-out event to a CSV to identify whitelist candidates."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Deduplicate by video_id — same video dropped many times is one entry to review
+    seen: set[str] = set()
+    unique_rows = []
+    for row in dropped_rows:
+        if row["video_id"] not in seen:
+            seen.add(row["video_id"])
+            unique_rows.append(row)
+
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=_DROPPED_FIELDS)
+        writer.writeheader()
+        for row in unique_rows:
+            writer.writerow({
+                "video_id": row["video_id"],
+                "url": _yt_url(row["video_id"]),
+                "channel": row["channel"],
+                "title": row["title"],
+                "reason": row["reason"],
+                "watched_at": row["watched_at"],
+            })
+    print(f"  Audit (dropped) → {path} ({len(unique_rows):,} unique videos, {len(dropped_rows):,} total events)")

@@ -1,0 +1,30 @@
+# yt-scrobbler rules
+# Edit this file to tune filtering and normalization without touching code.
+
+channels:
+  # Always treat these as music regardless of YouTube category.
+  # Supports exact match or * glob (e.g. "*VEVO", "* - Topic").
+  whitelist:
+    - "*VEVO"
+    - "*vevo"
+    # - "Monstercat"
+
+  # Never treat these as music even if category says Music.
+  blacklist:
+    - "freeCodeCamp.org"
+    # - "Traversy Media"
+
+# Force specific video IDs to a given artist/track (skips filter + normalize).
+# Find the video ID in out/audit_dropped.csv or the URL: watch?v=VIDEO_ID
+video_overrides:
+  # "dQw4w9WgXcQ":
+  #   artist: "Rick Astley"
+  #   track: "Never Gonna Give You Up"
+  #   album: "Whenever You Need Somebody"   # optional
+
+# Map channel names to artist names for non-Topic channels.
+# Useful for VEVO and label channels where the channel name != artist name.
+channel_artist_map:
+  # "KendrickLamarVEVO": "Kendrick Lamar"
+  # "TaylorSwiftVEVO": "Taylor Swift"
+  # "UMG_YouTube": ~   # ~ means skip this channel entirely
