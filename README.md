@@ -15,6 +15,18 @@ uv run python main.py run --takeout watch-history.json
 
 Import each `batch_NNN.csv` into [Last.fm-Scrubbler-WPF](https://github.com/SHOEGAZEssb/Last.fm-Scrubbler-WPF) one per day (≤ 3,000 scrobbles/day limit).
 
+## Running without a YouTube API key
+
+Pass `--no-api` to skip Stage 2 entirely. The filter uses only the `" - Topic"` channel
+signal already present in the Takeout data — high precision, but lower recall (VEVO and
+other non-Topic music channels won't be picked up).
+
+```bash
+uv run python main.py run --takeout watch-history.json --no-api
+```
+
+You can always re-run later with an API key to catch the rest.
+
 ## Stage-by-stage usage
 
 ```bash
@@ -22,9 +34,11 @@ uv run python main.py parse     --takeout watch-history.json   # Stage 1
 uv run python main.py fetch                                    # Stage 2: YouTube API (cached)
 uv run python main.py fetch     --dry-run                      # Stage 2: cache only
 uv run python main.py filter                                   # Stage 3: keep music only
+uv run python main.py filter    --no-api                       # Stage 3: Topic-channel only
 uv run python main.py normalize                                # Stage 4: extract artist/track
 uv run python main.py format    --format csv   --chunk 2800    # Stage 5: write output
 uv run python main.py report                                   # dry-run summary
+uv run python main.py report    --no-api                       # summary without API
 ```
 
 ## Configuration

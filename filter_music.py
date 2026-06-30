@@ -4,10 +4,40 @@ import logging
 from collections import Counter
 from typing import Iterable
 
+import re
+
 from config import CONF_TOPIC, MAX_DURATION_S, MIN_DURATION_S, MUSIC_CATEGORY_ID
 from models import VideoMeta, WatchEvent
 
+# Takeout prepends a locale-specific "Watched " prefix to every title.
+# Strip the most common variants as a best-effort for the --no-api path.
+_WATCHED_PREFIX_RE = re.compile(
+    r"^(?:Watched|Regardé|Angesehen|Bekeken|Reproduzido|Reproducido|"
+    r"Visualizzato|Просмотрено|観た|시청함|已觀看)\s+",
+    re.IGNORECASE,
+)
+
 log = logging.getLogger(__name__)
+
+
+def meta_from_takeout(events: Iterable[WatchEvent]) -> dict[str, VideoMeta]:
+    """Build minimal VideoMeta stubs from Takeout data alone (no API call).
+
+    category_id is left None so the category filter never fires; only the
+    Topic-channel override can mark an entry as music.
+    """
+    stubs: dict[str, VideoMeta] = {}
+    for e in events:
+        if e.video_id not in stubs:
+            stubs[e.video_id] = VideoMeta(
+                video_id=e.video_id,
+                category_id=None,
+                api_title=_WATCHED_PREFIX_RE.sub("", e.raw_title),
+                channel_title=e.channel,
+                duration_s=None,
+                unavailable=False,
+            )
+    return stubs
 
 
 def is_topic_channel(channel_title: str | None) -> bool:
@@ -16,13 +46,16 @@ def is_topic_channel(channel_title: str | None) -> bool:
 
 def is_music(meta: VideoMeta, min_dur: int | None = MIN_DURATION_S, max_dur: int | None = MAX_DURATION_S) -> tuple[bool, str]:
     """Return (keep, reason_string)."""
-    if meta.unavailable or meta.category_id is None:
+    if meta.unavailable:
         return False, "unavailable"
 
     is_topic = is_topic_channel(meta.channel_title)
     cat_ok = meta.category_id == MUSIC_CATEGORY_ID
 
+    # Topic-channel is a hard override regardless of whether we have a category ID
     if not cat_ok and not is_topic:
+        if meta.category_id is None:
+            return False, "no_metadata"
         return False, f"category_{meta.category_id}"
 
     dur = meta.duration_s

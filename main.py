@@ -30,9 +30,13 @@ def cmd_fetch(args: argparse.Namespace):
 
 
 def cmd_filter(args: argparse.Namespace):
-    from filter_music import run
+    from filter_music import meta_from_takeout, run
     events = _load_state("events")
-    meta_map = _load_state("meta_map")
+    if args.no_api:
+        print("--no-api: filtering on Topic-channel signal only (no category ID)")
+        meta_map = meta_from_takeout(events)
+    else:
+        meta_map = _load_state("meta_map")
     min_dur = None if args.no_duration_filter else MIN_DURATION_S
     max_dur = None if args.no_duration_filter else MAX_DURATION_S
     kept, report = run(events, meta_map, min_dur=min_dur, max_dur=max_dur)
@@ -60,11 +64,18 @@ def cmd_report(args: argparse.Namespace):
     """Dry-run summary — no output files written."""
     from collections import Counter
 
-    from filter_music import filter_music
+    from filter_music import filter_music, meta_from_takeout
     from normalize import normalize
 
     events = _load_state("events")
-    meta_map = _load_state("meta_map", required=False) or {}
+    no_api = getattr(args, "no_api", False)
+
+    if no_api:
+        meta_map = meta_from_takeout(events)
+        api_note = " (Topic-channel only, no API)"
+    else:
+        meta_map = _load_state("meta_map", required=False) or {}
+        api_note = ""
 
     unique_ids = len({e.video_id for e in events})
     cached = sum(1 for e in events if e.video_id in meta_map)
@@ -72,13 +83,14 @@ def cmd_report(args: argparse.Namespace):
     print("\n=== Pipeline Report ===")
     print(f"  Total watch events    : {len(events):,}")
     print(f"  Unique video IDs      : {unique_ids:,}")
-    print(f"  Cache hit rate        : {cached/unique_ids*100:.1f}%" if unique_ids else "  Cache hit rate        : N/A")
+    if not no_api:
+        print(f"  Cache hit rate        : {cached/unique_ids*100:.1f}%" if unique_ids else "  Cache hit rate        : N/A")
 
     if meta_map:
         min_dur = None if args.no_duration_filter else MIN_DURATION_S
         max_dur = None if args.no_duration_filter else MAX_DURATION_S
         kept, report = filter_music(events, meta_map, min_dur, max_dur)
-        print(f"  Music events kept     : {report['kept']:,}")
+        print(f"  Music events kept{api_note:<26}: {report['kept']:,}")
         print(f"  Dropped               : {report['dropped']:,}")
         print(f"  Category breakdown:")
         for k, v in sorted(report["breakdown"].items()):
@@ -92,14 +104,14 @@ def cmd_report(args: argparse.Namespace):
                 print(f"    {c:<10} {n:>8,}")
             batches = -(-len(music_events) // CHUNK_SIZE)  # ceil div
             print(f"\n  Estimated import batches ({CHUNK_SIZE}/file): {batches}")
-    else:
+    elif not no_api:
         print("  (Run 'fetch' first to see filter/confidence stats)")
     print()
 
 
 def cmd_run(args: argparse.Namespace):
     """Run all stages end-to-end."""
-    from fetch_metadata import run as fetch_run
+    from filter_music import meta_from_takeout
     from filter_music import run as filter_run
     from format_output import run as format_run
     from normalize import run as normalize_run
@@ -108,8 +120,13 @@ def cmd_run(args: argparse.Namespace):
     events = parse_run(Path(args.takeout))
     _save_state("events", events)
 
-    meta_map = fetch_run(events, dry_run=getattr(args, "dry_run", False))
-    _save_state("meta_map", meta_map)
+    if args.no_api:
+        print("--no-api: skipping Stage 2, filtering on Topic-channel signal only")
+        meta_map = meta_from_takeout(events)
+    else:
+        from fetch_metadata import run as fetch_run
+        meta_map = fetch_run(events, dry_run=getattr(args, "dry_run", False))
+        _save_state("meta_map", meta_map)
 
     min_dur = None if args.no_duration_filter else MIN_DURATION_S
     max_dur = None if args.no_duration_filter else MAX_DURATION_S
@@ -153,6 +170,8 @@ def _load_state(key: str, required: bool = True):
 def _add_common(p: argparse.ArgumentParser):
     p.add_argument("--no-duration-filter", action="store_true",
                    help="Disable min/max duration filters")
+    p.add_argument("--no-api", action="store_true",
+                   help="Skip YouTube API; filter on Topic-channel signal from Takeout data only")
 
 
 def build_parser() -> argparse.ArgumentParser:
