@@ -1,0 +1,10 @@
+cache.sqlite
+out/
+.pipeline_state/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
