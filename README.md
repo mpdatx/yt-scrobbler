@@ -5,7 +5,7 @@ Convert years of YouTube watch history (Google Takeout) into backdated Last.fm s
 ## Quick start
 
 ```bash
-uv venv && uv pip install -r requirements.txt
+uv venv && uv pip install -e ".[dev]"
 cp .env.example .env
 # edit .env and add your YouTube Data API v3 key
 
