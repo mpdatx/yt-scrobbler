@@ -6,11 +6,10 @@ Convert years of YouTube watch history (Google Takeout) into backdated Last.fm s
 
 ```bash
 uv venv && uv pip install -r requirements.txt
-source .venv/bin/activate
 cp .env.example .env
 # edit .env and add your YouTube Data API v3 key
 
-python main.py run --takeout watch-history.json
+uv run python main.py run --takeout watch-history.json
 # output files land in out/batch_001.csv, batch_002.csv, ...
 ```
 
@@ -19,13 +18,13 @@ Import each `batch_NNN.csv` into [Last.fm-Scrubbler-WPF](https://github.com/SHOE
 ## Stage-by-stage usage
 
 ```bash
-python main.py parse     --takeout watch-history.json   # Stage 1
-python main.py fetch                                    # Stage 2: YouTube API (cached)
-python main.py fetch     --dry-run                      # Stage 2: cache only
-python main.py filter                                   # Stage 3: keep music only
-python main.py normalize                                # Stage 4: extract artist/track
-python main.py format    --format csv   --chunk 2800    # Stage 5: write output
-python main.py report                                   # dry-run summary
+uv run python main.py parse     --takeout watch-history.json   # Stage 1
+uv run python main.py fetch                                    # Stage 2: YouTube API (cached)
+uv run python main.py fetch     --dry-run                      # Stage 2: cache only
+uv run python main.py filter                                   # Stage 3: keep music only
+uv run python main.py normalize                                # Stage 4: extract artist/track
+uv run python main.py format    --format csv   --chunk 2800    # Stage 5: write output
+uv run python main.py report                                   # dry-run summary
 ```
 
 ## Configuration
