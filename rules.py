@@ -33,16 +33,28 @@ def _parse_regex_pattern(pat: str) -> re.Pattern | None:
         return None
 
 
-def _compile_channel_patterns(patterns: list[str]) -> list[tuple[str, re.Pattern | None]]:
-    """Return list of (raw_pattern, compiled_regex_or_None)."""
-    compiled = []
+_GLOB_CHARS = frozenset("*?[")
+
+
+def _compile_channel_patterns(
+    patterns: list[str],
+) -> tuple[set[str], list[tuple[str, re.Pattern | None]]]:
+    """Return (exact_set, glob_and_regex_list).
+
+    Exact channel names (no glob wildcards, not a /regex/) go into a set for
+    O(1) lookup. Globs and regexes go into the fallback list.
+    """
+    exact: set[str] = set()
+    compiled: list[tuple[str, re.Pattern | None]] = []
     for pat in patterns:
         rx = _parse_regex_pattern(pat)
         if rx is not None or pat.startswith("/"):
-            compiled.append((pat, rx))  # rx=None means bad regex, skip silently
-        else:
+            compiled.append((pat, rx))  # rx=None means bad regex, skipped at match time
+        elif any(c in pat for c in _GLOB_CHARS):
             compiled.append((pat, None))  # glob
-    return compiled
+        else:
+            exact.add(pat)  # plain exact string — fast set lookup
+    return exact, compiled
 
 
 @dataclass
@@ -80,8 +92,8 @@ def _compile_title_rules(raw_rules: list[dict]) -> list[TitleRule]:
 class Rules:
     def __init__(self, data: dict):
         ch = data.get("channels") or {}
-        self._whitelist = _compile_channel_patterns(ch.get("whitelist") or [])
-        self._blacklist = _compile_channel_patterns(ch.get("blacklist") or [])
+        self._whitelist_exact, self._whitelist = _compile_channel_patterns(ch.get("whitelist") or [])
+        self._blacklist_exact, self._blacklist = _compile_channel_patterns(ch.get("blacklist") or [])
         self._video_overrides: dict[str, dict] = data.get("video_overrides") or {}
         self._channel_artist_map: dict[str, Optional[str]] = (
             data.get("channel_artist_map") or {}
@@ -95,8 +107,13 @@ class Rules:
     # ------------------------------------------------------------------
 
     def _channel_matches(
-        self, patterns: list[tuple[str, re.Pattern | None]], channel: str
+        self,
+        exact: set[str],
+        patterns: list[tuple[str, re.Pattern | None]],
+        channel: str,
     ) -> bool:
+        if channel in exact:
+            return True
         for raw, rx in patterns:
             if rx is not None:
                 if rx.search(channel):
@@ -109,12 +126,12 @@ class Rules:
     def is_whitelisted(self, video_id: str, channel: str) -> bool:
         if video_id in self._video_overrides:
             return True
-        return self._channel_matches(self._whitelist, channel)
+        return self._channel_matches(self._whitelist_exact, self._whitelist, channel)
 
     def is_blacklisted(self, video_id: str, channel: str) -> bool:
         if video_id in self._video_overrides:
             return False  # explicit override always wins
-        return self._channel_matches(self._blacklist, channel)
+        return self._channel_matches(self._blacklist_exact, self._blacklist, channel)
 
     # ------------------------------------------------------------------
     # Video / channel overrides
