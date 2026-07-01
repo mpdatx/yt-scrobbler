@@ -91,6 +91,16 @@ def cmd_format(args: argparse.Namespace):
     return paths
 
 
+def cmd_triage(args: argparse.Namespace):
+    """Interactively review unclassified channels and add rules."""
+    from triage import run_triage
+    needs_metadata = _load_state("needs_metadata", required=False)
+    if not needs_metadata:
+        print("No needs_metadata state found. Run 'parse' (and optionally 'filter') first.")
+        return
+    run_triage(needs_metadata, top_n=args.top_n, sample_size=args.sample)
+
+
 def cmd_report(args: argparse.Namespace):
     """Dry-run summary — no output files written."""
     from collections import Counter
@@ -265,6 +275,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_format.add_argument("--chunk", type=int, default=CHUNK_SIZE,
                           help=f"Entries per output file (default {CHUNK_SIZE})")
 
+    # triage
+    p_triage = sub.add_parser("triage", help="Interactively whitelist/blacklist unclassified channels")
+    p_triage.add_argument("--top-n", type=int, default=30,
+                          help="Review the top N channels by event count (default 30)")
+    p_triage.add_argument("--sample", type=int, default=5,
+                          help="Sample titles to show per channel (default 5)")
+
     # report
     p_report = sub.add_parser("report", help="Dry-run summary")
     _add_common(p_report)
@@ -290,6 +307,7 @@ def main():
         "filter": cmd_filter,
         "normalize": cmd_normalize,
         "format": cmd_format,
+        "triage": cmd_triage,
         "report": cmd_report,
         "run": cmd_run,
     }
