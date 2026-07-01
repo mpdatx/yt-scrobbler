@@ -33,3 +33,6 @@ class MusicEvent:
     confidence: str  # "topic" | "parsed" | "fallback"
     raw_title: str
     channel: str
+    # Populated by the validate stage; default keeps earlier stages unchanged
+    artist_validation: str = "unvalidated"   # mb_exact|mb_fuzzy|lastfm|unverified|unvalidated
+    artist_correction: Optional[str] = None  # suggested canonical name (not auto-applied)

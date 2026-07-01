@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 YOUTUBE_API_KEY: str = os.getenv("YOUTUBE_API_KEY", "")
+LASTFM_API_KEY: str = os.getenv("LASTFM_API_KEY", "")
+
+MB_DUMP_PATH = Path(os.getenv("MB_DUMP_PATH", "")) if os.getenv("MB_DUMP_PATH") else None
 
 BASE_DIR = Path(__file__).parent
 CACHE_DB = BASE_DIR / "cache.sqlite"

@@ -91,6 +91,39 @@ def cmd_format(args: argparse.Namespace):
     return paths
 
 
+def cmd_validate(args: argparse.Namespace):
+    """Two-pass artist validation: MusicBrainz local dump → Last.fm API."""
+    import validate as val_mod
+    from audit import write_audit_corrections, write_audit_unverified
+    from config import CACHE_DB, LASTFM_API_KEY
+
+    music_events = _load_state("music_events")
+
+    mb_set = None
+    mb_path = Path(args.mb_dump) if args.mb_dump else None
+    if mb_path:
+        if not mb_path.exists():
+            print(f"Error: MB dump not found at {mb_path}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Loading MusicBrainz dump: {mb_path}")
+        mb_set = val_mod.load_mb_artists(mb_path)
+
+    api_key = args.lastfm_key or LASTFM_API_KEY or None
+
+    music_events = val_mod.run(
+        music_events,
+        mb_set=mb_set,
+        lastfm_api_key=api_key,
+        cache_db=CACHE_DB,
+        fuzzy_threshold=args.fuzzy_threshold,
+    )
+    _save_state("music_events", music_events)
+
+    print("\nWriting validation audit files:")
+    write_audit_unverified(music_events, OUT_DIR / "audit_unverified.csv")
+    write_audit_corrections(music_events, OUT_DIR / "audit_corrections.csv")
+
+
 def cmd_triage(args: argparse.Namespace):
     """Interactively review unclassified channels and add rules."""
     from triage import run_triage
@@ -275,6 +308,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_format.add_argument("--chunk", type=int, default=CHUNK_SIZE,
                           help=f"Entries per output file (default {CHUNK_SIZE})")
 
+    # validate
+    p_val = sub.add_parser("validate", help="Stage 5b: two-pass artist validation (MB + Last.fm)")
+    p_val.add_argument("--mb-dump", default=None,
+                       help="Path to MusicBrainz artist JSON dump (.jsonl/.gz/.zst)")
+    p_val.add_argument("--lastfm-key", default=None,
+                       help="Last.fm API key (overrides LASTFM_API_KEY env var)")
+    p_val.add_argument("--fuzzy-threshold", type=int, default=88,
+                       help="rapidfuzz WRatio threshold for MB fuzzy match (default 88)")
+
     # triage
     p_triage = sub.add_parser("triage", help="Interactively whitelist/blacklist unclassified channels")
     p_triage.add_argument("--top-n", type=int, default=30,
@@ -307,6 +349,7 @@ def main():
         "filter": cmd_filter,
         "normalize": cmd_normalize,
         "format": cmd_format,
+        "validate": cmd_validate,
         "triage": cmd_triage,
         "report": cmd_report,
         "run": cmd_run,

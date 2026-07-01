@@ -13,7 +13,14 @@ def _yt_url(video_id: str) -> str:
 
 _KEPT_FIELDS = [
     "video_id", "url", "artist", "track", "album",
-    "confidence", "channel", "raw_title", "watched_at",
+    "confidence", "artist_validation", "artist_correction",
+    "channel", "raw_title", "watched_at",
+]
+
+_UNVERIFIED_FIELDS = [
+    "video_id", "url", "artist", "track", "album",
+    "confidence", "artist_validation", "artist_correction",
+    "channel", "raw_title", "watched_at",
 ]
 
 _DROPPED_FIELDS = [
@@ -35,6 +42,8 @@ def write_audit_kept(events: list[MusicEvent], path: Path) -> None:
                 "track": e.track,
                 "album": e.album or "",
                 "confidence": e.confidence,
+                "artist_validation": e.artist_validation,
+                "artist_correction": e.artist_correction or "",
                 "channel": e.channel,
                 "raw_title": e.raw_title,
                 "watched_at": e.watched_at.isoformat(),
@@ -96,3 +105,37 @@ def write_audit_dropped(dropped_rows: list[dict], path: Path) -> None:
                 "watched_at": row["watched_at"],
             })
     print(f"  Audit (dropped) → {path} ({len(unique_rows):,} unique videos, {len(dropped_rows):,} total events)")
+
+
+def _write_validation_csv(events: list[MusicEvent], path: Path, label: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=_UNVERIFIED_FIELDS)
+        writer.writeheader()
+        for e in events:
+            writer.writerow({
+                "video_id": e.video_id,
+                "url": _yt_url(e.video_id),
+                "artist": e.artist,
+                "track": e.track,
+                "album": e.album or "",
+                "confidence": e.confidence,
+                "artist_validation": e.artist_validation,
+                "artist_correction": e.artist_correction or "",
+                "channel": e.channel,
+                "raw_title": e.raw_title,
+                "watched_at": e.watched_at.isoformat(),
+            })
+    print(f"  Audit ({label:<18}) → {path} ({len(events):,} rows)")
+
+
+def write_audit_unverified(events: list[MusicEvent], path: Path) -> None:
+    """Write events whose artist couldn't be confirmed by MB or Last.fm."""
+    subset = [e for e in events if e.artist_validation == "unverified"]
+    _write_validation_csv(subset, path, "unverified")
+
+
+def write_audit_corrections(events: list[MusicEvent], path: Path) -> None:
+    """Write events where MB or Last.fm suggested a different artist spelling."""
+    subset = [e for e in events if e.artist_correction]
+    _write_validation_csv(subset, path, "corrections")
