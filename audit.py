@@ -42,6 +42,36 @@ def write_audit_kept(events: list[MusicEvent], path: Path) -> None:
     print(f"  Audit (kept)    → {path} ({len(events):,} rows)")
 
 
+def write_audit_needs_metadata(events: list, path: Path) -> None:
+    """Write deduplicated needs-metadata events so you can spot whitelist candidates
+    before spending API quota on them."""
+    from models import WatchEvent
+    from filter_music import _WATCHED_PREFIX_RE
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    unique_rows = []
+    for e in events:
+        if e.video_id not in seen:
+            seen.add(e.video_id)
+            unique_rows.append(e)
+
+    unique_rows.sort(key=lambda e: e.channel)
+
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["video_id", "url", "channel", "title", "watched_at"])
+        writer.writeheader()
+        for e in unique_rows:
+            writer.writerow({
+                "video_id": e.video_id,
+                "url": _yt_url(e.video_id),
+                "channel": e.channel,
+                "title": _WATCHED_PREFIX_RE.sub("", e.raw_title),
+                "watched_at": e.watched_at.isoformat(),
+            })
+    print(f"  Audit (needs metadata) → {path} ({len(unique_rows):,} unique videos, {len(events):,} total events)")
+
+
 def write_audit_dropped(dropped_rows: list[dict], path: Path) -> None:
     """Write every filtered-out event to a CSV to identify whitelist candidates."""
     path.parent.mkdir(parents=True, exist_ok=True)

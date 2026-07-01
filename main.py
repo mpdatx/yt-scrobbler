@@ -64,6 +64,7 @@ def cmd_filter(args: argparse.Namespace):
     )
     _save_state("kept_pairs", kept)
     _save_state("dropped_rows", dropped_rows)
+    _save_state("needs_metadata", needs_metadata)
     return kept, report, dropped_rows
 
 
@@ -77,13 +78,15 @@ def cmd_normalize(args: argparse.Namespace):
 
 
 def cmd_format(args: argparse.Namespace):
-    from audit import write_audit_dropped, write_audit_kept
+    from audit import write_audit_dropped, write_audit_kept, write_audit_needs_metadata
     from format_output import run
     music_events = _load_state("music_events")
     dropped_rows = _load_state("dropped_rows", required=False) or []
+    needs_metadata = _load_state("needs_metadata", required=False) or []
     print("\nWriting audit files:")
     write_audit_kept(music_events, OUT_DIR / "audit_kept.csv")
     write_audit_dropped(dropped_rows, OUT_DIR / "audit_dropped.csv")
+    write_audit_needs_metadata(needs_metadata, OUT_DIR / "audit_needs_metadata.csv")
     paths = run(music_events, fmt=args.format, chunk_size=args.chunk, out_dir=OUT_DIR)
     return paths
 
@@ -147,7 +150,7 @@ def cmd_report(args: argparse.Namespace):
 
 def cmd_run(args: argparse.Namespace):
     """Run all stages end-to-end."""
-    from audit import write_audit_dropped, write_audit_kept
+    from audit import write_audit_dropped, write_audit_kept, write_audit_needs_metadata
     from filter_music import pre_classify
     from filter_music import run as filter_run
     from format_output import run as format_run
@@ -165,6 +168,8 @@ def cmd_run(args: argparse.Namespace):
     print(f"Pre-classify: {len(definite_music):,} definite music, "
           f"{unique_needs:,} unique IDs need metadata, "
           f"{len(pre_dropped):,} events dropped early")
+
+    _save_state("needs_metadata", needs_metadata)
 
     if args.no_api:
         print("--no-api: skipping Stage 2")
@@ -191,6 +196,7 @@ def cmd_run(args: argparse.Namespace):
     print("\nWriting audit files:")
     write_audit_kept(music_events, OUT_DIR / "audit_kept.csv")
     write_audit_dropped(dropped_rows, OUT_DIR / "audit_dropped.csv")
+    write_audit_needs_metadata(needs_metadata, OUT_DIR / "audit_needs_metadata.csv")
 
     format_run(music_events, fmt=args.format, chunk_size=args.chunk, out_dir=OUT_DIR)
 
