@@ -102,6 +102,12 @@ def filter_music(
             dropped_rows.append(_drop_row(event, api_title, "blacklisted"))
             continue
 
+        # --- rules: title skip pattern ---
+        if rules and rules.title_should_skip(api_title):
+            reason_counts["dropped_title_skip"] += 1
+            dropped_rows.append(_drop_row(event, api_title, "title_skip"))
+            continue
+
         # --- rules: video_override or channel whitelist bypasses category check ---
         if rules and rules.is_whitelisted(event.video_id, channel):
             if meta is None:

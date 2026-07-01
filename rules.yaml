@@ -1,21 +1,25 @@
 # yt-scrobbler rules
 # Edit this file to tune filtering and normalization without touching code.
+# Re-run the pipeline after changes — no code changes needed.
 
 channels:
   # Always treat these as music regardless of YouTube category.
-  # Supports exact match or * glob (e.g. "*VEVO", "* - Topic").
+  # Glob:  use * as wildcard  →  "*VEVO" matches "TaylorSwiftVEVO"
+  # Regex: wrap in /…/        →  "/Records$/" matches "XL Recordings" etc.
   whitelist:
     - "*VEVO"
     - "*vevo"
+    - "/\\bRecord/"             # matches "Records", "Recordings", "Recording"
+    - "/\\bMusic\\b/"           # matches "Music" as a whole word
     # - "Monstercat"
 
-  # Never treat these as music even if category says Music.
+  # Never treat these as music even if YouTube category says Music.
   blacklist:
     - "freeCodeCamp.org"
-    # - "Traversy Media"
+    # - "/^(?:Kurzgesagt|TED|TEDx.*)/i"   # skip educational channels by regex
 
 # Force specific video IDs to a given artist/track (skips filter + normalize).
-# Find the video ID in out/audit_dropped.csv or the URL: watch?v=VIDEO_ID
+# Find the ID in out/audit_dropped.csv or the URL: youtube.com/watch?v=VIDEO_ID
 video_overrides:
   # "dQw4w9WgXcQ":
   #   artist: "Rick Astley"
@@ -24,7 +28,37 @@ video_overrides:
 
 # Map channel names to artist names for non-Topic channels.
 # Useful for VEVO and label channels where the channel name != artist name.
+# Set to null (~) to skip the channel entirely.
 channel_artist_map:
   # "KendrickLamarVEVO": "Kendrick Lamar"
   # "TaylorSwiftVEVO": "Taylor Swift"
-  # "UMG_YouTube": ~   # ~ means skip this channel entirely
+  # "UMG_YouTube": ~
+
+# Title-level rules, applied in order before any other normalization.
+# Each rule needs a 'match' regex and an 'action':
+#
+#   action: skip     — drop this video entirely (useful for mix/stream titles)
+#   action: strip    — remove the matched text from the title, then normalize normally
+#   action: extract  — pull artist/track from capture groups \1, \2, etc.
+#                      (first matching extract rule wins)
+#
+# All strip rules run first (in order), then the first matching extract rule.
+# skip rules are checked before filter even runs.
+title_patterns:
+  # Drop AI-generated music platforms
+  # - match: "\\|\\s*(?:Udio|Suno)\\s*(AI|Music)?\\s*$"
+  #   action: skip
+
+  # Strip "| Artist Name" label suffixes some channels append
+  # - match: "\\s*\\|\\s*[A-Z][^|]+$"
+  #   action: strip
+
+  # Channels that reverse the usual order: "Track Name - Artist Name"
+  # - match: "^(.+?)\\s+-\\s+(.+)$"
+  #   action: extract
+  #   artist: "\\2"
+  #   track: "\\1"
+
+  # Skip hour-long mixes and compilations
+  # - match: "(?:hour|hr\\.?)\\s+mix|full\\s+album|playlist"
+  #   action: skip

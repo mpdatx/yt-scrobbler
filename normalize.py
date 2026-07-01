@@ -106,18 +106,30 @@ def normalize_one(
                 "override",
             )
 
-    # 2. Topic channel
+    # 2. Title pattern rules (strip / extract) — run before everything else
+    #    so later stages see a clean title.
+    if rules:
+        title, artist_from_title, track_from_title = rules.apply_title_rules(title)
+        if artist_from_title is not None or track_from_title is not None:
+            return (
+                _clean_field(artist_from_title or channel),
+                _clean_field(track_from_title or title),
+                None,
+                "title_pattern",
+            )
+
+    # 3. Topic channel
     if channel.endswith(" - Topic"):
         artist = _strip_topic_suffix(channel)
         track = _clean_field(title)
         return artist, track, None, CONF_TOPIC
 
-    # 3. Channel artist map — apply before title split so the mapped name is used
+    # 4. Channel artist map — apply before title split so the mapped name is used
     mapped_artist: str | None = None
     if rules:
         mapped_artist = rules.get_channel_artist(channel)
 
-    # 4. "Artist - Track" split
+    # 5. "Artist - Track" split
     parts = _DASH_SPLIT_RE.split(title, maxsplit=1)
     if len(parts) == 2:
         raw_artist = _clean_field(parts[0])
@@ -126,7 +138,7 @@ def normalize_one(
         if artist and track and len(artist) < 120 and len(track) < 200:
             return artist, track, None, CONF_PARSED
 
-    # 5. Fallback: channel (or mapped name) = artist, full cleaned title = track
+    # 6. Fallback: channel (or mapped name) = artist, full cleaned title = track
     artist = mapped_artist or _clean_field(channel) or channel
     track = _clean_field(title)
     return artist, track, None, CONF_FALLBACK
