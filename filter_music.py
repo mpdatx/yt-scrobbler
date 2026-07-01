@@ -23,6 +23,57 @@ _WATCHED_PREFIX_RE = re.compile(
 log = logging.getLogger(__name__)
 
 
+def _stub(event: WatchEvent) -> VideoMeta:
+    """Minimal VideoMeta built from Takeout data alone."""
+    return VideoMeta(
+        video_id=event.video_id,
+        category_id=None,
+        api_title=_WATCHED_PREFIX_RE.sub("", event.raw_title),
+        channel_title=event.channel,
+        duration_s=None,
+        unavailable=False,
+    )
+
+
+def pre_classify(
+    events: list[WatchEvent],
+    rules: Rules | None = None,
+) -> tuple[list[WatchEvent], list[WatchEvent], list[dict]]:
+    """Split events into (definite_music, needs_metadata, dropped_rows) using
+    only Takeout data — no API call required.
+
+    definite_music:  Topic channels + whitelisted channels/videos.
+    needs_metadata:  Everything else; must go through the YouTube API.
+    dropped_rows:    Blacklisted or title-skipped events (audit_dropped format).
+
+    Deduplication of video IDs happens in fetch_metadata; pre_classify preserves
+    all watch events so replay timestamps are not lost.
+    """
+    definite_music: list[WatchEvent] = []
+    needs_metadata: list[WatchEvent] = []
+    dropped_rows: list[dict] = []
+
+    for event in events:
+        channel = event.channel
+        title = _WATCHED_PREFIX_RE.sub("", event.raw_title)
+
+        if rules and rules.is_blacklisted(event.video_id, channel):
+            dropped_rows.append(_drop_row(event, title, "blacklisted"))
+            continue
+
+        if rules and rules.title_should_skip(title):
+            dropped_rows.append(_drop_row(event, title, "title_skip"))
+            continue
+
+        if is_topic_channel(channel) or (rules and rules.is_whitelisted(event.video_id, channel)):
+            definite_music.append(event)
+            continue
+
+        needs_metadata.append(event)
+
+    return definite_music, needs_metadata, dropped_rows
+
+
 def meta_from_takeout(events: Iterable[WatchEvent]) -> dict[str, VideoMeta]:
     """Build minimal VideoMeta stubs from Takeout data alone (no API call).
 
@@ -75,53 +126,38 @@ def is_music(
 
 
 def filter_music(
-    events: Iterable[WatchEvent],
+    needs_metadata_events: Iterable[WatchEvent],
     meta_map: dict[str, VideoMeta],
+    definite_music_events: list[WatchEvent] | None = None,
+    pre_dropped_rows: list[dict] | None = None,
     min_dur: int | None = MIN_DURATION_S,
     max_dur: int | None = MAX_DURATION_S,
-    rules: Rules | None = None,
 ) -> tuple[list[tuple[WatchEvent, VideoMeta]], dict, list[dict]]:
-    """Return (kept_pairs, report_dict, dropped_rows).
+    """Filter the needs_metadata bucket against the API-fetched meta_map.
 
-    dropped_rows is a list of dicts suitable for writing to audit_dropped.csv.
+    definite_music_events and pre_dropped_rows come from pre_classify() and
+    are merged into the result so the report and audit files are complete.
     """
     kept: list[tuple[WatchEvent, VideoMeta]] = []
-    dropped_rows: list[dict] = []
+    dropped_rows: list[dict] = list(pre_dropped_rows or [])
     reason_counts: Counter = Counter()
-    total = 0
 
-    for event in events:
-        total += 1
-        channel = event.channel
+    # Seed counts from pre-classify drops
+    for row in (pre_dropped_rows or []):
+        reason_counts[f"dropped_{row['reason']}"] += 1
+
+    # Definite music — use API metadata if available (has duration/title),
+    # fall back to stub if the video wasn't fetched (e.g. --no-api)
+    for event in (definite_music_events or []):
+        meta = meta_map.get(event.video_id) or _stub(event)
+        kept.append((event, meta))
+        reason = "topic" if is_topic_channel(event.channel) else "whitelisted"
+        reason_counts[f"kept_{reason}"] += 1
+
+    # Ambiguous bucket — apply category/duration filter against fetched metadata
+    for event in needs_metadata_events:
         meta = meta_map.get(event.video_id)
         api_title = (meta.api_title if meta else None) or event.raw_title
-
-        # --- rules: blacklist always wins ---
-        if rules and rules.is_blacklisted(event.video_id, channel):
-            reason_counts["dropped_blacklisted"] += 1
-            dropped_rows.append(_drop_row(event, api_title, "blacklisted"))
-            continue
-
-        # --- rules: title skip pattern ---
-        if rules and rules.title_should_skip(api_title):
-            reason_counts["dropped_title_skip"] += 1
-            dropped_rows.append(_drop_row(event, api_title, "title_skip"))
-            continue
-
-        # --- rules: video_override or channel whitelist bypasses category check ---
-        if rules and rules.is_whitelisted(event.video_id, channel):
-            if meta is None:
-                meta = VideoMeta(
-                    video_id=event.video_id,
-                    category_id=None,
-                    api_title=_WATCHED_PREFIX_RE.sub("", event.raw_title),
-                    channel_title=channel,
-                    duration_s=None,
-                    unavailable=False,
-                )
-            kept.append((event, meta))
-            reason_counts["kept_whitelisted"] += 1
-            continue
 
         if meta is None:
             reason_counts["no_meta"] += 1
@@ -136,6 +172,7 @@ def filter_music(
             reason_counts[f"dropped_{reason}"] += 1
             dropped_rows.append(_drop_row(event, api_title, reason))
 
+    total = sum(reason_counts.values())
     report = {
         "total_events": total,
         "kept": len(kept),
@@ -156,13 +193,18 @@ def _drop_row(event: WatchEvent, title: str, reason: str) -> dict:
 
 
 def run(
-    events: list[WatchEvent],
+    needs_metadata_events: list[WatchEvent],
     meta_map: dict[str, VideoMeta],
+    definite_music_events: list[WatchEvent] | None = None,
+    pre_dropped_rows: list[dict] | None = None,
     min_dur: int | None = MIN_DURATION_S,
     max_dur: int | None = MAX_DURATION_S,
-    rules: Rules | None = None,
 ) -> tuple[list[tuple[WatchEvent, VideoMeta]], dict, list[dict]]:
-    kept, report, dropped_rows = filter_music(events, meta_map, min_dur, max_dur, rules)
+    kept, report, dropped_rows = filter_music(
+        needs_metadata_events, meta_map,
+        definite_music_events, pre_dropped_rows,
+        min_dur, max_dur,
+    )
     print(f"\nFilter report:")
     print(f"  Total watch events : {report['total_events']:,}")
     print(f"  Kept (music)       : {report['kept']:,}")

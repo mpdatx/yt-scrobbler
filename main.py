@@ -30,24 +30,38 @@ def cmd_parse(args: argparse.Namespace):
 
 def cmd_fetch(args: argparse.Namespace):
     from fetch_metadata import run
+    from filter_music import pre_classify
     events = _load_state("events")
-    meta_map = run(events, dry_run=args.dry_run)
+    rules = _load_rules()
+    _, needs_metadata, _ = pre_classify(events, rules)
+    print(f"Pre-classify: {len(needs_metadata):,} events need metadata "
+          f"({len(events) - len(needs_metadata):,} resolved without API)")
+    meta_map = run(needs_metadata, dry_run=args.dry_run)
     _save_state("meta_map", meta_map)
     return meta_map
 
 
 def cmd_filter(args: argparse.Namespace):
-    from filter_music import meta_from_takeout, run
+    from filter_music import pre_classify, run
     events = _load_state("events")
-    if args.no_api:
-        print("--no-api: filtering on Topic-channel signal and whitelist rules only")
-        meta_map = meta_from_takeout(events)
-    else:
-        meta_map = _load_state("meta_map")
+    rules = _load_rules()
     min_dur = None if args.no_duration_filter else MIN_DURATION_S
     max_dur = None if args.no_duration_filter else MAX_DURATION_S
-    rules = _load_rules()
-    kept, report, dropped_rows = run(events, meta_map, min_dur=min_dur, max_dur=max_dur, rules=rules)
+
+    definite_music, needs_metadata, pre_dropped = pre_classify(events, rules)
+
+    if args.no_api:
+        print("--no-api: skipping metadata fetch, needs_metadata bucket dropped")
+        meta_map = {}
+    else:
+        meta_map = _load_state("meta_map")
+
+    kept, report, dropped_rows = run(
+        needs_metadata, meta_map,
+        definite_music_events=definite_music,
+        pre_dropped_rows=pre_dropped,
+        min_dur=min_dur, max_dur=max_dur,
+    )
     _save_state("kept_pairs", kept)
     _save_state("dropped_rows", dropped_rows)
     return kept, report, dropped_rows
@@ -78,7 +92,7 @@ def cmd_report(args: argparse.Namespace):
     """Dry-run summary — no output files written."""
     from collections import Counter
 
-    from filter_music import filter_music, meta_from_takeout
+    from filter_music import filter_music
     from normalize import normalize
 
     events = _load_state("events")
@@ -101,10 +115,17 @@ def cmd_report(args: argparse.Namespace):
     if not no_api:
         print(f"  Cache hit rate        : {cached/unique_ids*100:.1f}%" if unique_ids else "  Cache hit rate        : N/A")
 
-    if meta_map:
+    if meta_map or no_api:
+        from filter_music import pre_classify
         min_dur = None if args.no_duration_filter else MIN_DURATION_S
         max_dur = None if args.no_duration_filter else MAX_DURATION_S
-        kept, report, _ = filter_music(events, meta_map, min_dur, max_dur, rules)
+        definite_music, needs_metadata, pre_dropped = pre_classify(events, rules)
+        kept, report, _ = filter_music(
+            needs_metadata, meta_map,
+            definite_music_events=definite_music,
+            pre_dropped_rows=pre_dropped,
+            min_dur=min_dur, max_dur=max_dur,
+        )
         print(f"  Music events kept{api_note:<26}: {report['kept']:,}")
         print(f"  Dropped               : {report['dropped']:,}")
         print(f"  Category breakdown:")
@@ -127,7 +148,7 @@ def cmd_report(args: argparse.Namespace):
 def cmd_run(args: argparse.Namespace):
     """Run all stages end-to-end."""
     from audit import write_audit_dropped, write_audit_kept
-    from filter_music import meta_from_takeout
+    from filter_music import pre_classify
     from filter_music import run as filter_run
     from format_output import run as format_run
     from normalize import run as normalize_run
@@ -138,17 +159,29 @@ def cmd_run(args: argparse.Namespace):
     events = parse_run(Path(args.takeout))
     _save_state("events", events)
 
+    # Pre-classify on Takeout data alone — no API needed for these buckets
+    definite_music, needs_metadata, pre_dropped = pre_classify(events, rules)
+    unique_needs = len({e.video_id for e in needs_metadata})
+    print(f"Pre-classify: {len(definite_music):,} definite music, "
+          f"{unique_needs:,} unique IDs need metadata, "
+          f"{len(pre_dropped):,} events dropped early")
+
     if args.no_api:
-        print("--no-api: skipping Stage 2, filtering on Topic-channel signal only")
-        meta_map = meta_from_takeout(events)
+        print("--no-api: skipping Stage 2")
+        meta_map = {}
     else:
         from fetch_metadata import run as fetch_run
-        meta_map = fetch_run(events, dry_run=getattr(args, "dry_run", False))
+        meta_map = fetch_run(needs_metadata, dry_run=getattr(args, "dry_run", False))
         _save_state("meta_map", meta_map)
 
     min_dur = None if args.no_duration_filter else MIN_DURATION_S
     max_dur = None if args.no_duration_filter else MAX_DURATION_S
-    kept, _, dropped_rows = filter_run(events, meta_map, min_dur=min_dur, max_dur=max_dur, rules=rules)
+    kept, _, dropped_rows = filter_run(
+        needs_metadata, meta_map,
+        definite_music_events=definite_music,
+        pre_dropped_rows=pre_dropped,
+        min_dur=min_dur, max_dur=max_dur,
+    )
     _save_state("kept_pairs", kept)
     _save_state("dropped_rows", dropped_rows)
 
