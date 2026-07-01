@@ -72,10 +72,11 @@ def run_triage(
     """Interactively triage the needs_metadata bucket by channel."""
     import random
 
-    # Group events by channel
+    # Group events by channel; blank channel names get a placeholder
     by_channel: dict[str, list] = defaultdict(list)
     for e in needs_metadata:
-        by_channel[e.channel].append(e)
+        key = e.channel if e.channel else "(no channel)"
+        by_channel[key].append(e)
 
     # Sort channels by event count descending
     ranked = sorted(by_channel.items(), key=lambda kv: len(kv[1]), reverse=True)
@@ -110,6 +111,10 @@ def run_triage(
         print("  Sample titles:")
         for e in sample:
             print(f"    • {_strip_watched_prefix(e.raw_title)}")
+
+        if channel == "(no channel)":
+            print("  (no channel name — cannot add to rules; skipping)")
+            continue
 
         # Check if already in a list
         already_white = channel in whitelist
