@@ -20,7 +20,7 @@ MUSIC_CATEGORY_ID = "10"
 
 # Duration filters (seconds). Set to None to disable.
 MIN_DURATION_S = 30
-MAX_DURATION_S = 60 * 15  # 15 min — can be overridden per run
+MAX_DURATION_S = 60 * 60  # 60 min — catches streams/full-albums; use title skip rules for mixes
 
 # Output chunking
 CHUNK_SIZE = 2800
