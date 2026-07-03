@@ -1,38 +1,37 @@
 from __future__ import annotations
 
-"""Write audit CSVs after filter and normalize stages."""
+"""Write audit CSVs after filter, normalize, and validate stages."""
 import csv
+from collections import Counter
 from pathlib import Path
 
-from models import MusicEvent
+from models import MusicEvent, WatchEvent
 
 
 def _yt_url(video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
-_KEPT_FIELDS = [
+_MUSIC_EVENT_FIELDS = [
     "video_id", "url", "artist", "track", "album",
-    "confidence", "artist_validation", "artist_correction",
+    "confidence", "disposition", "review_reason",
+    "artist_validation", "artist_correction",
     "channel", "raw_title", "watched_at",
 ]
 
-_UNVERIFIED_FIELDS = [
-    "video_id", "url", "artist", "track", "album",
-    "confidence", "artist_validation", "artist_correction",
-    "channel", "raw_title", "watched_at",
-]
-
-_DROPPED_FIELDS = [
+_NOT_MUSIC_FIELDS = [
     "video_id", "url", "channel", "title", "reason", "watched_at",
 ]
 
+_UNDECIDED_FIELDS = [
+    "video_id", "url", "channel", "title", "watched_at",
+]
 
-def write_audit_kept(events: list[MusicEvent], path: Path) -> None:
-    """Write every normalized music event to a CSV for spot-checking."""
+
+def _write_music_event_csv(events: list[MusicEvent], path: Path, label: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=_KEPT_FIELDS)
+        writer = csv.DictWriter(fh, fieldnames=_MUSIC_EVENT_FIELDS)
         writer.writeheader()
         for e in events:
             writer.writerow({
@@ -42,60 +41,58 @@ def write_audit_kept(events: list[MusicEvent], path: Path) -> None:
                 "track": e.track,
                 "album": e.album or "",
                 "confidence": e.confidence,
+                "disposition": e.disposition,
+                "review_reason": e.review_reason or "",
                 "artist_validation": e.artist_validation,
                 "artist_correction": e.artist_correction or "",
                 "channel": e.channel,
                 "raw_title": e.raw_title,
                 "watched_at": e.watched_at.isoformat(),
             })
-    print(f"  Audit (kept)    → {path} ({len(events):,} rows)")
+    print(f"  {label:<35} → {path} ({len(events):,} rows)")
 
 
-def write_audit_needs_metadata(events: list, path: Path) -> None:
-    """Write deduplicated needs-metadata events so you can spot whitelist candidates
-    before spending API quota on them."""
-    from models import WatchEvent
-    from filter_music import _WATCHED_PREFIX_RE
+# ---------------------------------------------------------------------------
+# Per-bucket writers
+# ---------------------------------------------------------------------------
 
+def write_audit_ready(events: list[MusicEvent], path: Path) -> None:
+    """All scrobble-ready events — the full picture of what will be scrobbled."""
+    from models import Disposition
+    subset = [e for e in events if e.disposition == Disposition.READY]
+    _write_music_event_csv(subset, path, "Audit (ready)")
+
+
+def write_audit_needs_review(events: list[MusicEvent], out_dir: Path) -> None:
+    """One CSV per review_reason so each queue is actionable independently."""
+    from models import Disposition
+    subset = [e for e in events if e.disposition == Disposition.NEEDS_REVIEW]
+    if not subset:
+        print(f"  Audit (needs_review)                → (none)")
+        return
+    by_reason: dict[str, list[MusicEvent]] = {}
+    for e in subset:
+        key = e.review_reason or "unknown"
+        by_reason.setdefault(key, []).append(e)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for reason, rows in sorted(by_reason.items()):
+        path = out_dir / f"needs_review_{reason}.csv"
+        _write_music_event_csv(rows, path, f"Audit (needs_review/{reason})")
+
+
+def write_audit_not_music(not_music_rows: list[dict], path: Path) -> None:
+    """Events confirmed as not music — deduplicated by video_id."""
     path.parent.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
-    unique_rows = []
-    for e in events:
-        if e.video_id not in seen:
-            seen.add(e.video_id)
-            unique_rows.append(e)
-
-    unique_rows.sort(key=lambda e: e.channel)
-
-    with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["video_id", "url", "channel", "title", "watched_at"])
-        writer.writeheader()
-        for e in unique_rows:
-            writer.writerow({
-                "video_id": e.video_id,
-                "url": _yt_url(e.video_id),
-                "channel": e.channel,
-                "title": _WATCHED_PREFIX_RE.sub("", e.raw_title),
-                "watched_at": e.watched_at.isoformat(),
-            })
-    print(f"  Audit (needs metadata) → {path} ({len(unique_rows):,} unique videos, {len(events):,} total events)")
-
-
-def write_audit_dropped(dropped_rows: list[dict], path: Path) -> None:
-    """Write every filtered-out event to a CSV to identify whitelist candidates."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Deduplicate by video_id — same video dropped many times is one entry to review
-    seen: set[str] = set()
-    unique_rows = []
-    for row in dropped_rows:
+    unique: list[dict] = []
+    for row in not_music_rows:
         if row["video_id"] not in seen:
             seen.add(row["video_id"])
-            unique_rows.append(row)
-
+            unique.append(row)
     with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=_DROPPED_FIELDS)
+        writer = csv.DictWriter(fh, fieldnames=_NOT_MUSIC_FIELDS)
         writer.writeheader()
-        for row in unique_rows:
+        for row in unique:
             writer.writerow({
                 "video_id": row["video_id"],
                 "url": _yt_url(row["video_id"]),
@@ -104,38 +101,82 @@ def write_audit_dropped(dropped_rows: list[dict], path: Path) -> None:
                 "reason": row["reason"],
                 "watched_at": row["watched_at"],
             })
-    print(f"  Audit (dropped) → {path} ({len(unique_rows):,} unique videos, {len(dropped_rows):,} total events)")
+    print(f"  {'Audit (not_music)':<35} → {path} "
+          f"({len(unique):,} unique videos, {len(not_music_rows):,} total events)")
 
 
-def _write_validation_csv(events: list[MusicEvent], path: Path, label: str) -> None:
+def write_audit_undecided(undecided_events: list[WatchEvent], path: Path) -> None:
+    """Events with no metadata — deduplicated, sorted by channel."""
+    from filter_music import _WATCHED_PREFIX_RE
     path.parent.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    unique: list[WatchEvent] = []
+    for e in undecided_events:
+        if e.video_id not in seen:
+            seen.add(e.video_id)
+            unique.append(e)
+    unique.sort(key=lambda e: e.channel)
     with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=_UNVERIFIED_FIELDS)
+        writer = csv.DictWriter(fh, fieldnames=_UNDECIDED_FIELDS)
         writer.writeheader()
-        for e in events:
+        for e in unique:
             writer.writerow({
                 "video_id": e.video_id,
                 "url": _yt_url(e.video_id),
-                "artist": e.artist,
-                "track": e.track,
-                "album": e.album or "",
-                "confidence": e.confidence,
-                "artist_validation": e.artist_validation,
-                "artist_correction": e.artist_correction or "",
                 "channel": e.channel,
-                "raw_title": e.raw_title,
+                "title": _WATCHED_PREFIX_RE.sub("", e.raw_title),
                 "watched_at": e.watched_at.isoformat(),
             })
-    print(f"  Audit ({label:<18}) → {path} ({len(events):,} rows)")
+    print(f"  {'Audit (undecided)':<35} → {path} "
+          f"({len(unique):,} unique videos, {len(undecided_events):,} total events)")
 
 
-def write_audit_unverified(events: list[MusicEvent], path: Path) -> None:
-    """Write events whose artist couldn't be confirmed by MB or Last.fm."""
-    subset = [e for e in events if e.artist_validation == "unverified"]
-    _write_validation_csv(subset, path, "unverified")
+def write_audit_needs_metadata(events: list[WatchEvent], path: Path) -> None:
+    """Pre-filter view: videos that will need API metadata (before fetch stage)."""
+    from filter_music import _WATCHED_PREFIX_RE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    unique: list[WatchEvent] = []
+    for e in events:
+        if e.video_id not in seen:
+            seen.add(e.video_id)
+            unique.append(e)
+    unique.sort(key=lambda e: e.channel)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["video_id", "url", "channel", "title", "watched_at"])
+        writer.writeheader()
+        for e in unique:
+            writer.writerow({
+                "video_id": e.video_id,
+                "url": _yt_url(e.video_id),
+                "channel": e.channel,
+                "title": _WATCHED_PREFIX_RE.sub("", e.raw_title),
+                "watched_at": e.watched_at.isoformat(),
+            })
+    print(f"  {'Audit (needs_metadata)':<35} → {path} "
+          f"({len(unique):,} unique videos, {len(events):,} total events)")
 
 
 def write_audit_corrections(events: list[MusicEvent], path: Path) -> None:
-    """Write events where MB or Last.fm suggested a different artist spelling."""
+    """Events where MB or Last.fm suggested a different artist spelling."""
     subset = [e for e in events if e.artist_correction]
-    _write_validation_csv(subset, path, "corrections")
+    _write_music_event_csv(subset, path, "Audit (corrections)")
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat aliases
+# ---------------------------------------------------------------------------
+
+def write_audit_kept(events: list[MusicEvent], path: Path) -> None:
+    """Alias for write_audit_ready — all music events regardless of disposition."""
+    _write_music_event_csv(events, path, "Audit (all music events)")
+
+
+def write_audit_dropped(not_music_rows: list[dict], path: Path) -> None:
+    """Alias for write_audit_not_music."""
+    write_audit_not_music(not_music_rows, path)
+
+
+def write_audit_unverified(events: list[MusicEvent], path: Path) -> None:
+    subset = [e for e in events if e.artist_validation == "unverified"]
+    _write_music_event_csv(subset, path, "Audit (unverified)")

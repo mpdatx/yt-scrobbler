@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
 from config import CONF_FALLBACK, CONF_PARSED, CONF_TOPIC
-from models import MusicEvent, VideoMeta, WatchEvent
+from models import Disposition, MusicEvent, ReviewReason, VideoMeta, WatchEvent
 
 if TYPE_CHECKING:
     from rules import Rules
@@ -60,6 +60,26 @@ _UNICODE_QUOT_RE = re.compile("[“”]")
 # Trailing punctuation / whitespace
 _TRAIL_RE = re.compile(r"[\s,|]+$")
 _LEAD_RE = re.compile(r"^[\s,|]+")
+
+# Disposition-signal patterns (applied during normalize)
+_FULL_ALBUM_RE = re.compile(
+    r"\bfull\s+(?:album|ep|discography|lp)\b"
+    r"|\bcomplete\s+(?:album|discography)\b"
+    r"|\bside\s+[ab]\b",
+    re.IGNORECASE,
+)
+_OST_RE = re.compile(
+    r"\b(?:ost|original\s+(?:sound\s*track|score)|game\s+(?:music|ost|soundtrack)"
+    r"|(?:official\s+)?(?:video\s+)?game\s+music|anime\s+(?:ost|soundtrack)"
+    r"|(?:film|movie|tv|television)\s+(?:score|soundtrack))\b",
+    re.IGNORECASE,
+)
+_COMPILATION_RE = re.compile(
+    r"\bvarious\s+artists?\b|\bv\.?\s*a\.?\b|\bmulti[\s-]artist\b",
+    re.IGNORECASE,
+)
+# Duration threshold above which we flag as possible full album (20 min)
+_FULL_ALBUM_DURATION_S = 20 * 60
 
 
 def _unicode_normalize(s: str) -> str:
@@ -144,6 +164,26 @@ def normalize_one(
     return artist, track, None, CONF_FALLBACK
 
 
+def _detect_disposition(
+    title: str,
+    confidence: str,
+    duration_s: int | None,
+) -> tuple[str, str | None]:
+    """Return (disposition, review_reason) based on title/confidence/duration signals."""
+    # Check most-specific signals first
+    if _COMPILATION_RE.search(title):
+        return Disposition.NEEDS_REVIEW, ReviewReason.COMPILATION
+    if _FULL_ALBUM_RE.search(title) or (
+        duration_s is not None and duration_s > _FULL_ALBUM_DURATION_S
+    ):
+        return Disposition.NEEDS_REVIEW, ReviewReason.FULL_ALBUM
+    if _OST_RE.search(title):
+        return Disposition.NEEDS_REVIEW, ReviewReason.OST
+    if confidence == CONF_FALLBACK:
+        return Disposition.NEEDS_REVIEW, ReviewReason.POOR_TITLE
+    return Disposition.READY, None
+
+
 def normalize(
     pairs: Iterable[tuple[WatchEvent, VideoMeta]],
     rules: Rules | None = None,
@@ -152,6 +192,10 @@ def normalize(
 
     for event, meta in pairs:
         artist, track, album, confidence = normalize_one(event, meta, rules)
+        raw_title = meta.api_title or event.raw_title
+        disposition, review_reason = _detect_disposition(
+            raw_title, confidence, meta.duration_s
+        )
         music_event = MusicEvent(
             video_id=event.video_id,
             artist=artist,
@@ -159,8 +203,10 @@ def normalize(
             album=album,
             watched_at=event.watched_at,
             confidence=confidence,
-            raw_title=meta.api_title or event.raw_title,
+            raw_title=raw_title,
             channel=meta.channel_title or event.channel,
+            disposition=disposition,
+            review_reason=review_reason,
         )
         results.append(music_event)
 

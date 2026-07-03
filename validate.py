@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from models import MusicEvent
+from models import Disposition, MusicEvent, ReviewReason
 
 log = logging.getLogger(__name__)
 
@@ -262,12 +262,20 @@ def run(
                     event.artist_correction = lfm  # Last.fm's canonical spelling
             else:
                 event.artist_validation = "unverified"
+                # Downgrade disposition: unverified artist on a ready event → needs_review
+                if event.disposition == Disposition.READY:
+                    event.disposition = Disposition.NEEDS_REVIEW
+                    event.review_reason = ReviewReason.UNVERIFIED_ARTIST
 
     # Summary
     from collections import Counter
-    counts = Counter(e.artist_validation for e in music_events)
+    val_counts = Counter(e.artist_validation for e in music_events)
+    disp_counts = Counter(e.disposition for e in music_events)
     print("\n  Validation summary (events):")
     for tier in ("mb_exact", "mb_fuzzy", "lastfm", "unverified"):
-        print(f"    {tier:<15} {counts[tier]:>8,}")
+        print(f"    {tier:<20} {val_counts[tier]:>8,}")
+    print("\n  Disposition after validation:")
+    for d in ("ready", "needs_review"):
+        print(f"    {d:<20} {disp_counts[d]:>8,}")
 
     return music_events

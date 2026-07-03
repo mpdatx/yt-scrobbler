@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from config import CHUNK_SIZE, OUT_DIR
-from models import MusicEvent
+from models import Disposition, MusicEvent
 
 
 def _to_epoch(event: MusicEvent) -> int:
@@ -65,16 +65,32 @@ def run(
     chunk_size: int = CHUNK_SIZE,
     out_dir: Path = OUT_DIR,
 ) -> list[Path]:
+    ready = [e for e in events if e.disposition == Disposition.READY]
+    needs_review = [e for e in events if e.disposition == Disposition.NEEDS_REVIEW]
+
+    print(f"\nDisposition split:")
+    print(f"  Ready (scrobble)  : {len(ready):,}")
+    print(f"  Needs review      : {len(needs_review):,}")
+    if needs_review:
+        from collections import Counter
+        reasons = Counter(e.review_reason for e in needs_review)
+        for reason, count in sorted(reasons.items()):
+            print(f"    {(reason or 'unknown'):<25} {count:>8,}")
+
+    if not ready:
+        print("  (no ready events — nothing to write)")
+        return []
+
     if fmt == "csv":
-        paths = format_csv(events, out_dir, chunk_size)
+        paths = format_csv(ready, out_dir, chunk_size)
     elif fmt == "json":
-        paths = format_json(events, out_dir, chunk_size)
+        paths = format_json(ready, out_dir, chunk_size)
     elif fmt == "both":
-        paths = format_csv(events, out_dir, chunk_size) + format_json(events, out_dir, chunk_size)
+        paths = format_csv(ready, out_dir, chunk_size) + format_json(ready, out_dir, chunk_size)
     else:
         raise ValueError(f"Unknown format: {fmt!r}. Use 'csv', 'json', or 'both'.")
 
-    print(f"\nOutput: {len(paths)} file(s) in {out_dir}")
+    print(f"\nScrobble output: {len(paths)} file(s) in {out_dir}")
     for p in paths:
         print(f"  {p.name}")
     return paths

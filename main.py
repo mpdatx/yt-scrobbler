@@ -56,36 +56,41 @@ def cmd_filter(args: argparse.Namespace):
     else:
         meta_map = _load_state("meta_map")
 
-    kept, report, dropped_rows = run(
+    confirmed_music, report, not_music_rows, undecided_events = run(
         needs_metadata, meta_map,
         definite_music_events=definite_music,
         pre_dropped_rows=pre_dropped,
         min_dur=min_dur, max_dur=max_dur,
     )
-    _save_state("kept_pairs", kept)
-    _save_state("dropped_rows", dropped_rows)
+    _save_state("confirmed_music", confirmed_music)
+    _save_state("not_music_rows", not_music_rows)
+    _save_state("undecided_events", undecided_events)
     _save_state("needs_metadata", needs_metadata)
-    return kept, report, dropped_rows
+    return confirmed_music, report, not_music_rows, undecided_events
 
 
 def cmd_normalize(args: argparse.Namespace):
     from normalize import run
-    kept = _load_state("kept_pairs")
+    confirmed_music = _load_state("confirmed_music")
     rules = _load_rules()
-    music_events = run(kept, rules=rules)
+    music_events = run(confirmed_music, rules=rules)
     _save_state("music_events", music_events)
     return music_events
 
 
 def cmd_format(args: argparse.Namespace):
-    from audit import write_audit_dropped, write_audit_kept, write_audit_needs_metadata
+    from audit import (write_audit_needs_metadata, write_audit_needs_review,
+                       write_audit_not_music, write_audit_ready, write_audit_undecided)
     from format_output import run
     music_events = _load_state("music_events")
-    dropped_rows = _load_state("dropped_rows", required=False) or []
+    not_music_rows = _load_state("not_music_rows", required=False) or []
+    undecided_events = _load_state("undecided_events", required=False) or []
     needs_metadata = _load_state("needs_metadata", required=False) or []
     print("\nWriting audit files:")
-    write_audit_kept(music_events, OUT_DIR / "audit_kept.csv")
-    write_audit_dropped(dropped_rows, OUT_DIR / "audit_dropped.csv")
+    write_audit_ready(music_events, OUT_DIR / "audit_ready.csv")
+    write_audit_needs_review(music_events, OUT_DIR / "review")
+    write_audit_not_music(not_music_rows, OUT_DIR / "audit_not_music.csv")
+    write_audit_undecided(undecided_events, OUT_DIR / "audit_undecided.csv")
     write_audit_needs_metadata(needs_metadata, OUT_DIR / "audit_needs_metadata.csv")
     paths = run(music_events, fmt=args.format, chunk_size=args.chunk, out_dir=OUT_DIR)
     return paths
@@ -166,25 +171,32 @@ def cmd_report(args: argparse.Namespace):
         min_dur = None if args.no_duration_filter else MIN_DURATION_S
         max_dur = None if args.no_duration_filter else MAX_DURATION_S
         definite_music, needs_metadata, pre_dropped = pre_classify(events, rules)
-        kept, report, _ = filter_music(
+        confirmed_music, report, _, undecided = filter_music(
             needs_metadata, meta_map,
             definite_music_events=definite_music,
             pre_dropped_rows=pre_dropped,
             min_dur=min_dur, max_dur=max_dur,
         )
-        print(f"  Music events kept{api_note:<26}: {report['kept']:,}")
-        print(f"  Dropped               : {report['dropped']:,}")
+        print(f"  Confirmed music{api_note:<28}: {report['confirmed_music']:,}")
+        print(f"  Not music             : {report['not_music']:,}")
+        print(f"  Undecided             : {report['undecided']:,}")
         print(f"  Category breakdown:")
         for k, v in sorted(report["breakdown"].items()):
             print(f"    {k:<32} {v:>8,}")
 
-        if kept:
-            music_events = normalize(kept, rules=rules)
+        if confirmed_music:
+            music_events = normalize(confirmed_music, rules=rules)
+            from models import Disposition
+            ready = sum(1 for e in music_events if e.disposition == Disposition.READY)
+            needs_review = sum(1 for e in music_events if e.disposition == Disposition.NEEDS_REVIEW)
             conf = Counter(e.confidence for e in music_events)
+            print(f"\n  Disposition after normalize:")
+            print(f"    ready        {ready:>8,}")
+            print(f"    needs_review {needs_review:>8,}")
             print(f"\n  Confidence tiers:")
             for c, n in sorted(conf.items()):
                 print(f"    {c:<10} {n:>8,}")
-            batches = -(-len(music_events) // CHUNK_SIZE)
+            batches = -(-ready // CHUNK_SIZE)
             print(f"\n  Estimated import batches ({CHUNK_SIZE}/file): {batches}")
     elif not no_api:
         print("  (Run 'fetch' first to see filter/confidence stats)")
@@ -193,7 +205,8 @@ def cmd_report(args: argparse.Namespace):
 
 def cmd_run(args: argparse.Namespace):
     """Run all stages end-to-end."""
-    from audit import write_audit_dropped, write_audit_kept, write_audit_needs_metadata
+    from audit import (write_audit_needs_metadata, write_audit_needs_review,
+                       write_audit_not_music, write_audit_ready, write_audit_undecided)
     from filter_music import pre_classify
     from filter_music import run as filter_run
     from format_output import run as format_run
@@ -205,7 +218,6 @@ def cmd_run(args: argparse.Namespace):
     events = parse_run(Path(args.takeout))
     _save_state("events", events)
 
-    # Pre-classify on Takeout data alone — no API needed for these buckets
     definite_music, needs_metadata, pre_dropped = pre_classify(events, rules)
     unique_needs = len({e.video_id for e in needs_metadata})
     print(f"Pre-classify: {len(definite_music):,} definite music, "
@@ -224,21 +236,24 @@ def cmd_run(args: argparse.Namespace):
 
     min_dur = None if args.no_duration_filter else MIN_DURATION_S
     max_dur = None if args.no_duration_filter else MAX_DURATION_S
-    kept, _, dropped_rows = filter_run(
+    confirmed_music, _, not_music_rows, undecided_events = filter_run(
         needs_metadata, meta_map,
         definite_music_events=definite_music,
         pre_dropped_rows=pre_dropped,
         min_dur=min_dur, max_dur=max_dur,
     )
-    _save_state("kept_pairs", kept)
-    _save_state("dropped_rows", dropped_rows)
+    _save_state("confirmed_music", confirmed_music)
+    _save_state("not_music_rows", not_music_rows)
+    _save_state("undecided_events", undecided_events)
 
-    music_events = normalize_run(kept, rules=rules)
+    music_events = normalize_run(confirmed_music, rules=rules)
     _save_state("music_events", music_events)
 
     print("\nWriting audit files:")
-    write_audit_kept(music_events, OUT_DIR / "audit_kept.csv")
-    write_audit_dropped(dropped_rows, OUT_DIR / "audit_dropped.csv")
+    write_audit_ready(music_events, OUT_DIR / "audit_ready.csv")
+    write_audit_needs_review(music_events, OUT_DIR / "review")
+    write_audit_not_music(not_music_rows, OUT_DIR / "audit_not_music.csv")
+    write_audit_undecided(undecided_events, OUT_DIR / "audit_undecided.csv")
     write_audit_needs_metadata(needs_metadata, OUT_DIR / "audit_needs_metadata.csv")
 
     format_run(music_events, fmt=args.format, chunk_size=args.chunk, out_dir=OUT_DIR)
