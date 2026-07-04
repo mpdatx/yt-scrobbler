@@ -18,6 +18,18 @@ channels:
     - "freeCodeCamp.org"
     # - "/^(?:Kurzgesagt|TED|TEDx.*)/i"   # skip educational channels by regex
 
+  # Flag all videos from these channels as needs_review with the given reason.
+  # Supports the same glob / /regex/ syntax as whitelist and blacklist.
+  # Valid reasons: ost, full_album, compilation, poor_title, unverified_artist
+  # (or any custom string — it becomes the review bucket name)
+  review:
+    # - pattern: "GameSoundtrackChannel"
+    #   reason: ost
+    # - pattern: "/\\bSoundtrack\\b/"
+    #   reason: ost
+    # - pattern: "SomeAlbumDumpChannel"
+    #   reason: full_album
+
 # Force specific video IDs to a given artist/track (skips filter + normalize).
 # Find the ID in out/audit_dropped.csv or the URL: youtube.com/watch?v=VIDEO_ID
 video_overrides:
@@ -34,6 +46,11 @@ channel_artist_map:
   # "TaylorSwiftVEVO": "Taylor Swift"
   # "UMG_YouTube": ~
 
+# Tune the duration threshold above which a video is flagged as full_album.
+# Default is 20 minutes. Set higher to allow live recordings, DJ sets you want, etc.
+# thresholds:
+#   full_album_duration_minutes: 20
+
 # Title-level rules, applied in order before any other normalization.
 # Each rule needs a 'match' regex and an 'action':
 #
@@ -41,8 +58,10 @@ channel_artist_map:
 #   action: strip    — remove the matched text from the title, then normalize normally
 #   action: extract  — pull artist/track from capture groups \1, \2, etc.
 #                      (first matching extract rule wins)
+#   action: review   — flag as needs_review with the given reason (must include 'reason:')
+#                      (first matching review rule wins; does not modify the title)
 #
-# All strip rules run first (in order), then the first matching extract rule.
+# All strip rules run first (in order), then the first matching extract/review rule.
 # skip rules are checked before filter even runs.
 title_patterns:
   # Drop AI-generated music platforms
@@ -62,3 +81,13 @@ title_patterns:
   # Skip hour-long mixes and compilations
   # - match: "(?:hour|hr\\.?)\\s+mix|full\\s+album|playlist"
   #   action: skip
+
+  # Flag game/anime soundtracks for review instead of dropping
+  # - match: "\\bO\\.?S\\.?T\\.?\\b|original\\s+soundtrack|game\\s+(?:music|ost)"
+  #   action: review
+  #   reason: ost
+
+  # Flag NCS / label releases that need artist extraction help
+  # - match: "\\[NCS\\s+Release\\]|\\[Monstercat\\]"
+  #   action: review
+  #   reason: poor_title

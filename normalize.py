@@ -166,21 +166,44 @@ def normalize_one(
 
 def _detect_disposition(
     title: str,
+    channel: str,
     confidence: str,
     duration_s: int | None,
+    rules: Rules | None = None,
 ) -> tuple[str, str | None]:
-    """Return (disposition, review_reason) based on title/confidence/duration signals."""
-    # Check most-specific signals first
+    """Return (disposition, review_reason).
+
+    Rules-based signals (from rules.yaml) take priority over hardcoded patterns.
+    """
+    # 1. Rules-based channel signal
+    if rules:
+        reason = rules.get_channel_review_reason(channel)
+        if reason:
+            return Disposition.NEEDS_REVIEW, reason
+
+    # 2. Rules-based title signal
+    if rules:
+        reason = rules.get_title_review_reason(title)
+        if reason:
+            return Disposition.NEEDS_REVIEW, reason
+
+    # 3. Hardcoded title patterns (defaults when no rules configured)
+    full_album_threshold = (
+        rules.full_album_duration_s if rules else _FULL_ALBUM_DURATION_S
+    )
     if _COMPILATION_RE.search(title):
         return Disposition.NEEDS_REVIEW, ReviewReason.COMPILATION
     if _FULL_ALBUM_RE.search(title) or (
-        duration_s is not None and duration_s > _FULL_ALBUM_DURATION_S
+        duration_s is not None and duration_s > full_album_threshold
     ):
         return Disposition.NEEDS_REVIEW, ReviewReason.FULL_ALBUM
     if _OST_RE.search(title):
         return Disposition.NEEDS_REVIEW, ReviewReason.OST
+
+    # 4. Parse quality signal
     if confidence == CONF_FALLBACK:
         return Disposition.NEEDS_REVIEW, ReviewReason.POOR_TITLE
+
     return Disposition.READY, None
 
 
@@ -193,8 +216,9 @@ def normalize(
     for event, meta in pairs:
         artist, track, album, confidence = normalize_one(event, meta, rules)
         raw_title = meta.api_title or event.raw_title
+        channel = meta.channel_title or event.channel
         disposition, review_reason = _detect_disposition(
-            raw_title, confidence, meta.duration_s
+            raw_title, channel, confidence, meta.duration_s, rules
         )
         music_event = MusicEvent(
             video_id=event.video_id,

@@ -61,9 +61,19 @@ def _compile_channel_patterns(
 class TitleRule:
     raw: str
     pattern: re.Pattern
-    action: str          # "skip" | "strip" | "extract"
+    action: str          # "skip" | "strip" | "extract" | "review"
     artist_tpl: str      # only used for action="extract"
     track_tpl: str       # only used for action="extract"
+    review_reason: str   # only used for action="review"
+
+
+@dataclass
+class ChannelReviewRule:
+    """Flag videos from matching channels as needs_review with a given reason."""
+    pattern: str
+    reason: str
+    exact: bool          # True = plain string, False = glob or regex
+    rx: Optional[re.Pattern]
 
 
 def _compile_title_rules(raw_rules: list[dict]) -> list[TitleRule]:
@@ -85,8 +95,28 @@ def _compile_title_rules(raw_rules: list[dict]) -> list[TitleRule]:
             action=action,
             artist_tpl=r.get("artist", ""),
             track_tpl=r.get("track", ""),
+            review_reason=r.get("reason", ""),
         ))
     return compiled
+
+
+def _compile_channel_review_rules(entries: list[dict]) -> list[ChannelReviewRule]:
+    """Parse channels.review list: [{pattern: "...", reason: "ost"}, ...]"""
+    rules = []
+    for entry in entries:
+        pat = entry.get("pattern", "")
+        reason = entry.get("reason", "")
+        if not pat or not reason:
+            log.warning("channels.review entry missing 'pattern' or 'reason': %r", entry)
+            continue
+        rx = _parse_regex_pattern(pat)
+        if rx is not None or pat.startswith("/"):
+            rules.append(ChannelReviewRule(pattern=pat, reason=reason, exact=False, rx=rx))
+        elif any(c in pat for c in _GLOB_CHARS):
+            rules.append(ChannelReviewRule(pattern=pat, reason=reason, exact=False, rx=None))
+        else:
+            rules.append(ChannelReviewRule(pattern=pat, reason=reason, exact=True, rx=None))
+    return rules
 
 
 class Rules:
@@ -94,12 +124,19 @@ class Rules:
         ch = data.get("channels") or {}
         self._whitelist_exact, self._whitelist = _compile_channel_patterns(ch.get("whitelist") or [])
         self._blacklist_exact, self._blacklist = _compile_channel_patterns(ch.get("blacklist") or [])
+        self._channel_review: list[ChannelReviewRule] = _compile_channel_review_rules(
+            ch.get("review") or []
+        )
         self._video_overrides: dict[str, dict] = data.get("video_overrides") or {}
         self._channel_artist_map: dict[str, Optional[str]] = (
             data.get("channel_artist_map") or {}
         )
         self._title_rules: list[TitleRule] = _compile_title_rules(
             data.get("title_patterns") or []
+        )
+        thresholds = data.get("thresholds") or {}
+        self.full_album_duration_s: int = int(
+            thresholds.get("full_album_duration_minutes", 20) * 60
         )
 
     # ------------------------------------------------------------------
@@ -144,6 +181,27 @@ class Rules:
         """Return mapped artist name, or None if no mapping."""
         return self._channel_artist_map.get(channel)
 
+    def get_channel_review_reason(self, channel: str) -> Optional[str]:
+        """Return the review reason if this channel matches a channels.review rule, else None."""
+        for rule in self._channel_review:
+            if rule.exact:
+                if channel == rule.pattern:
+                    return rule.reason
+            elif rule.rx is not None:
+                if rule.rx.search(channel):
+                    return rule.reason
+            else:
+                if fnmatch.fnmatch(channel, rule.pattern):
+                    return rule.reason
+        return None
+
+    def get_title_review_reason(self, title: str) -> Optional[str]:
+        """Return the review reason if any title_pattern with action=review matches, else None."""
+        for rule in self._title_rules:
+            if rule.action == "review" and rule.pattern.search(title):
+                return rule.review_reason
+        return None
+
     # ------------------------------------------------------------------
     # Title pattern rules
     # ------------------------------------------------------------------
@@ -165,7 +223,7 @@ class Rules:
         track_override: Optional[str] = None
 
         for rule in self._title_rules:
-            if rule.action == "skip":
+            if rule.action in ("skip", "review"):
                 continue
 
             if rule.action == "strip":
