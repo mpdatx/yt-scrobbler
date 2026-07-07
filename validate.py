@@ -32,15 +32,29 @@ _FUZZY_THRESHOLD = 88  # WRatio score 0–100; tune down if you want more fuzzy 
 # ---------------------------------------------------------------------------
 
 def load_mb_artists(dump_path: Path) -> set[str]:
-    """Load artist names + aliases from a MB JSON dump into a case-folded set.
+    """Load artist names into a case-folded set from a preprocessed names file or raw dump.
 
-    Supports plain .jsonl / .json, .gz, and .zst files.
-    Each line must be a JSON object with at least a "name" field; optional
-    "sort-name" and "aliases" (list of {"name": ...}) are also harvested.
+    Preferred input: data/mb_artist_names.txt produced by preprocess_mb.py
+    (one case-folded name per line — loads in seconds).
+
+    Also accepts raw .jsonl / .json / .gz / .zst dumps, but those are slow for
+    large files; run preprocess_mb.py once instead.
     """
+    # Fast path: plain text file (one name per line, already case-folded)
+    if dump_path.suffix.lower() == ".txt":
+        names: set[str] = set()
+        with dump_path.open(encoding="utf-8") as fh:
+            for line in fh:
+                name = line.strip()
+                if name:
+                    names.add(name)
+        log.info("Loaded %d MB artist names from %s", len(names), dump_path)
+        return names
+
+    # Slow path: raw JSON/JSONL dump — stream with ijson if available
     import json
 
-    names: set[str] = set()
+    names = set()
 
     def _ingest(line: str) -> None:
         line = line.strip()
