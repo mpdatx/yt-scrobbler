@@ -205,8 +205,9 @@ def cmd_report(args: argparse.Namespace):
 
 def cmd_run(args: argparse.Namespace):
     """Run all stages end-to-end."""
-    from audit import (write_audit_needs_metadata, write_audit_needs_review,
-                       write_audit_not_music, write_audit_ready, write_audit_undecided)
+    from audit import (write_audit_corrections, write_audit_needs_metadata,
+                       write_audit_needs_review, write_audit_not_music,
+                       write_audit_ready, write_audit_undecided, write_audit_unverified)
     from filter_music import pre_classify
     from filter_music import run as filter_run
     from format_output import run as format_run
@@ -247,6 +248,31 @@ def cmd_run(args: argparse.Namespace):
     _save_state("undecided_events", undecided_events)
 
     music_events = normalize_run(confirmed_music, rules=rules)
+
+    # Optional validation pass
+    mb_dump = getattr(args, "mb_dump", None)
+    lastfm_key = getattr(args, "lastfm_key", None)
+    fuzzy_threshold = getattr(args, "fuzzy_threshold", 88)
+    if mb_dump or lastfm_key:
+        import validate as val_mod
+        from config import LASTFM_API_KEY
+        mb_set = None
+        if mb_dump:
+            mb_path = Path(mb_dump)
+            if not mb_path.exists():
+                print(f"Error: MB dump not found at {mb_path}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Loading MusicBrainz dump: {mb_path}")
+            mb_set = val_mod.load_mb_artists(mb_path)
+        api_key = lastfm_key or LASTFM_API_KEY or None
+        music_events = val_mod.run(
+            music_events,
+            mb_set=mb_set,
+            lastfm_api_key=api_key,
+            cache_db=CACHE_DB,
+            fuzzy_threshold=fuzzy_threshold,
+        )
+
     _save_state("music_events", music_events)
 
     print("\nWriting audit files:")
@@ -255,6 +281,9 @@ def cmd_run(args: argparse.Namespace):
     write_audit_not_music(not_music_rows, OUT_DIR / "audit_not_music.csv")
     write_audit_undecided(undecided_events, OUT_DIR / "audit_undecided.csv")
     write_audit_needs_metadata(needs_metadata, OUT_DIR / "audit_needs_metadata.csv")
+    if mb_dump or lastfm_key:
+        write_audit_unverified(music_events, OUT_DIR / "audit_unverified.csv")
+        write_audit_corrections(music_events, OUT_DIR / "audit_corrections.csv")
 
     format_run(music_events, fmt=args.format, chunk_size=args.chunk, out_dir=OUT_DIR)
 
@@ -349,6 +378,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--format", choices=["csv", "json", "both"], default="csv")
     p_run.add_argument("--chunk", type=int, default=CHUNK_SIZE)
     p_run.add_argument("--dry-run", action="store_true")
+    p_run.add_argument("--mb-dump", default=None,
+                       help="Path to MB artist names file to enable validation pass")
+    p_run.add_argument("--lastfm-key", default=None,
+                       help="Last.fm API key for validation pass (overrides env var)")
+    p_run.add_argument("--fuzzy-threshold", type=int, default=88,
+                       help="rapidfuzz WRatio threshold for MB fuzzy match (default 88)")
     _add_common(p_run)
 
     return parser
